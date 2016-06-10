@@ -1,6 +1,7 @@
 package gotbot
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/golang/glog"
@@ -64,16 +65,13 @@ func (chat *chat) AskOptions(reply string, options []string) {
 
 func (chat *chat) processMessage(message *telebot.Message) {
 
-	glog.Infoln("Chat", chat.Destination(), "message", message.Text, "context", chat.context.command)
+	glog.Infoln("Chat", chat.Destination(),
+		"message", message.Text,
+		"location", message.Location,
+		"context", chat.context.command)
 
-	fields := strings.Fields(message.Text)
-
-	if len(fields) == 0 {
-		return
-	}
-
-	for command := range chat.commands {
-		if strings.HasPrefix(fields[0], command) {
+	for command, _ := range chat.commands {
+		if strings.HasPrefix(message.Text, command) {
 			chat.doCommand(command, message)
 			return
 		}
@@ -82,6 +80,14 @@ func (chat *chat) processMessage(message *telebot.Message) {
 	if chat.context.isActive() {
 		chat.extractParams(message)
 		return
+	} else {
+		for command, handler := range chat.commands {
+			if len(handler.Name) > 0 && strings.HasPrefix(message.Text, handler.Name) {
+				message.Text = command
+				chat.doCommand(command, message)
+				return
+			}
+		}
 	}
 
 	chat.tbot.SendMessage(chat, "Я вас не понимаю", nil)
@@ -95,7 +101,7 @@ func (chat *chat) doCommand(command string, message *telebot.Message) {
 	handler := chat.commands[command]
 
 	if len(handler.params) == 0 {
-		handler.process(chat.context.params, chat)
+		chat.executeCommand()
 		return
 	}
 
@@ -113,7 +119,7 @@ func (chat *chat) doCommand(command string, message *telebot.Message) {
 			data = strings.Join(fields[i:], " ")
 		}
 
-		parsedParam, err := commandParameter.Parse(data)
+		parsedParam, err := commandParameter.ParseText(data)
 		if err != nil {
 			chat.context.nextParam = i
 			break
@@ -129,6 +135,10 @@ func (chat *chat) doCommand(command string, message *telebot.Message) {
 	}
 }
 
+func isLocationValid(location telebot.Location) bool {
+	return !(location.Latitude == 0 && location.Longitude == 0)
+}
+
 func (chat *chat) extractParams(message *telebot.Message) {
 	handler := chat.commands[chat.context.command]
 
@@ -136,7 +146,13 @@ func (chat *chat) extractParams(message *telebot.Message) {
 
 	if chat.context.nextParam > -1 {
 		commandParameter := handler.params[chat.context.nextParam]
-		parsedParam, err := commandParameter.Parse(message.Text)
+
+		parsedParam, err := commandParameter.ParseText(message.Text)
+		if err != nil && commandParameter.ParseLocation != nil && isLocationValid(message.Location) {
+			parsedParam, err = commandParameter.ParseLocation(
+				Location{Lon: float64(message.Location.Longitude), Lat: float64(message.Location.Latitude)})
+		}
+
 		if err != nil {
 			chat.askForParam()
 			return
@@ -187,4 +203,18 @@ func (chat *chat) executeCommand() {
 	}
 	chat.lastParams = chat.context.params
 	chat.context = makeCommandContext("")
+
+	chat.sendCommands()
+}
+
+func (chat *chat) sendCommands() {
+	glog.Infoln("Chat", chat.Destination(), "Sending commands")
+	keyboard := make([]string, 0, len(chat.commands))
+	for _, handler := range chat.commands {
+		if len(handler.Name) > 0 {
+			keyboard = append(keyboard, handler.Name)
+		}
+	}
+	sort.Strings(keyboard)
+	chat.AskOptions("Что-нибудь еще?", keyboard)
 }

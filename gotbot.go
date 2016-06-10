@@ -14,23 +14,31 @@ type ReplySender interface {
 	FirstName() string
 }
 
-type ParameterParser func(input string) (string, error)
+type Location struct {
+	Lon float64
+	Lat float64
+}
+
+type TextParameterParser func(input string) (string, error)
+type LocationParameterParser func(loc Location) (string, error)
 
 type CommandParameter struct {
-	Name        string
-	AskQuestion string
-	Parse       ParameterParser
+	Name          string
+	AskQuestion   string
+	ParseText     TextParameterParser
+	ParseLocation LocationParameterParser
 }
 
 type ProcessCommand func(parsedParams map[string]string, replySender ReplySender)
 
 type CommandHandler struct {
+	Name    string
 	params  []*CommandParameter
 	process ProcessCommand
 }
 
-func NewCommandHandler(processer ProcessCommand) *CommandHandler {
-	handler := CommandHandler{make([]*CommandParameter, 0), processer}
+func NewCommandHandler(name string, processer ProcessCommand) *CommandHandler {
+	handler := CommandHandler{name, make([]*CommandParameter, 0), processer}
 	return &handler
 }
 
