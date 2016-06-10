@@ -1,0 +1,8 @@
+[gotbot]
+Copyright (c) 2016 Anton Filimonov
+
+This product includes software developed by Google (www.google.com):
+glog (https://github.com/golang/glog) licensed under Apache License Version 2.0
+
+This product includes software developed by llya Kowalewski:
+telebot (https://github.com/tucnak/telebot) licensed under The MIT License
