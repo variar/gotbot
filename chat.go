@@ -115,6 +115,8 @@ func (chat *chat) processMessage(message *telebot.Message) {
 	}
 
 	chat.tbot.SendMessage(chat, "Я вас не понимаю", nil)
+	chat.sendMenu(chat.configuration.Menu)
+
 }
 
 func (chat *chat) doCommand(command string, message *telebot.Message) {
