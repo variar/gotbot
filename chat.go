@@ -33,7 +33,7 @@ type chat struct {
 }
 
 func newChat(tbot *telebot.Bot, tchat telebot.Chat, configuration *botConfiguration) *chat {
-	return &chat{tchat, configuration, tbot, make(map[string]string), makeCommandContext(""), nil}
+	return &chat{tchat, configuration, tbot, make(map[string]string), makeCommandContext(""), configuration.Menu}
 }
 
 func (chat *chat) Destination() string {
@@ -116,7 +116,6 @@ func (chat *chat) processMessage(message *telebot.Message) {
 
 	chat.tbot.SendMessage(chat, "Я вас не понимаю", nil)
 	chat.sendMenu(chat.configuration.Menu)
-
 }
 
 func (chat *chat) doCommand(command string, message *telebot.Message) {
