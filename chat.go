@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
-	"github.com/tucnak/telebot"
+	"gopkg.in/telegram-bot-api.v4"
 )
 
 type commandContext struct {
@@ -22,9 +22,9 @@ func makeCommandContext(command string) commandContext {
 }
 
 type chat struct {
-	tchat         telebot.Chat
+	tchat         *tgbotapi.Chat
 	configuration *botConfiguration
-	tbot          *telebot.Bot
+	tbot          *tgbotapi.BotAPI
 
 	lastParams map[string]string
 	context    commandContext
@@ -32,12 +32,16 @@ type chat struct {
 	currentMenu *Menu
 }
 
-func newChat(tbot *telebot.Bot, tchat telebot.Chat, configuration *botConfiguration) *chat {
+type markupProvider interface {
+	GetReplyMarkup() interface{}
+}
+
+func newChat(tbot *tgbotapi.BotAPI, tchat *tgbotapi.Chat, configuration *botConfiguration) *chat {
 	return &chat{tchat, configuration, tbot, make(map[string]string), makeCommandContext(""), configuration.Menu}
 }
 
-func (chat *chat) Destination() string {
-	return chat.tchat.Destination()
+func (chat *chat) Destination() int64 {
+	return chat.tchat.ID
 }
 
 func (chat *chat) FirstName() string {
@@ -45,33 +49,49 @@ func (chat *chat) FirstName() string {
 }
 
 func (chat *chat) SendReply(reply string) {
-	chat.tbot.SendMessage(chat, reply, &telebot.SendOptions{
-		ParseMode:   telebot.ModeMarkdown,
-		ReplyMarkup: telebot.ReplyMarkup{HideCustomKeyboard: true}})
+	chat.SendReplyWithMarkup(reply, tgbotapi.NewRemoveKeyboard(true))
 }
 
-func (chat *chat) AskOptions(reply string, options []string, force bool) {
-	keyboard := make([][]string, len(options))
-	for i, option := range options {
-		keyboard[i] = []string{option}
+func (chat *chat) sendReply(reply string, markupProvider markupProvider) {
+	if markupProvider != nil {
+		chat.SendReplyWithMarkup(reply, markupProvider.GetReplyMarkup())
+	} else {
+		chat.SendReply(reply)
 	}
-
-	chat.tbot.SendMessage(chat, reply, &telebot.SendOptions{
-		ReplyMarkup: telebot.ReplyMarkup{
-			ForceReply:      force,
-			Selective:       true,
-			OneTimeKeyboard: true,
-			CustomKeyboard:  keyboard}})
 }
 
-func (chat *chat) processMessage(message *telebot.Message) {
+func (chat *chat) SendReplyWithMarkup(reply string, markup interface{}) {
+	message := tgbotapi.NewMessage(chat.Destination(), reply)
+	message.ParseMode = tgbotapi.ModeMarkdown
+	message.ReplyMarkup = markup
+	chat.tbot.Send(message)
+}
+
+func (chat *chat) AskOptions(reply string, options []string) {
+
+	keyboardMarkup := tgbotapi.NewReplyKeyboard()
+	keyboardMarkup.Keyboard = make([][]tgbotapi.KeyboardButton, len(options))
+	for i, option := range options {
+		keyboardMarkup.Keyboard[i] = tgbotapi.NewKeyboardButtonRow(tgbotapi.NewKeyboardButton(option))
+	}
+	keyboardMarkup.OneTimeKeyboard = true
+	keyboardMarkup.Selective = true
+
+	message := tgbotapi.NewMessage(chat.Destination(), reply)
+	message.ParseMode = tgbotapi.ModeMarkdown
+	message.ReplyMarkup = keyboardMarkup
+
+	chat.tbot.Send(message)
+}
+
+func (chat *chat) processMessage(message *tgbotapi.Message) {
 
 	glog.Infoln("Chat", chat.Destination(),
 		"message", message.Text,
 		"location", message.Location,
 		"context", chat.context.command)
 
-	for command, _ := range chat.configuration.Commands {
+	for command := range chat.configuration.Commands {
 		if strings.HasPrefix(message.Text, command) {
 			chat.doCommand(command, message)
 			return
@@ -104,21 +124,20 @@ func (chat *chat) processMessage(message *telebot.Message) {
 	if chat.context.isActive() {
 		chat.extractParams(message)
 		return
-	} else {
-		for command, handler := range chat.configuration.Commands {
-			if len(handler.Name) > 0 && strings.HasPrefix(message.Text, handler.Name) {
-				message.Text = command
-				chat.doCommand(command, message)
-				return
-			}
+	}
+	for command, handler := range chat.configuration.Commands {
+		if len(handler.Name) > 0 && strings.HasPrefix(message.Text, handler.Name) {
+			message.Text = command
+			chat.doCommand(command, message)
+			return
 		}
 	}
 
-	chat.tbot.SendMessage(chat, "Я вас не понимаю", nil)
+	chat.tbot.Send(tgbotapi.NewMessage(chat.Destination(), "Я вас не понимаю"))
 	chat.sendMenu(chat.configuration.Menu)
 }
 
-func (chat *chat) doCommand(command string, message *telebot.Message) {
+func (chat *chat) doCommand(command string, message *tgbotapi.Message) {
 
 	glog.Infoln("Chat", chat.Destination(), "Do command", command)
 
@@ -161,11 +180,11 @@ func (chat *chat) doCommand(command string, message *telebot.Message) {
 	}
 }
 
-func isLocationValid(location telebot.Location) bool {
+func isLocationValid(location *tgbotapi.Location) bool {
 	return !(location.Latitude == 0 && location.Longitude == 0)
 }
 
-func (chat *chat) extractParams(message *telebot.Message) {
+func (chat *chat) extractParams(message *tgbotapi.Message) {
 	handler := chat.configuration.Commands[chat.context.command]
 
 	glog.Infoln("Chat", chat.Destination(), "Extract params", chat.context.command, chat.context.nextParam)
@@ -207,10 +226,11 @@ func (chat *chat) askForParam() {
 
 	lastValue, ok := chat.lastParams[commandParameter.Name]
 	if ok {
-		chat.AskOptions(commandParameter.AskQuestion, []string{lastValue}, true)
+		chat.AskOptions(commandParameter.AskQuestion, []string{lastValue})
 		return
 	}
-	chat.SendReply(commandParameter.AskQuestion)
+
+	chat.sendReply(commandParameter.AskQuestion, commandParameter.InlineHandler)
 }
 
 func (chat *chat) executeCommand() {
@@ -249,5 +269,5 @@ func (chat *chat) sendMenu(menu *Menu) {
 		keyboard = append(keyboard, menu.Parent.Name)
 	}
 
-	chat.AskOptions("Что-нибудь еще?", keyboard, false)
+	chat.AskOptions("Что-нибудь еще?", keyboard)
 }

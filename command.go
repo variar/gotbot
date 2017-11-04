@@ -2,13 +2,19 @@ package gotbot
 
 type ReplySender interface {
 	SendReply(reply string)
-	AskOptions(reply string, options []string, force bool)
+	SendReplyWithMarkup(reply string, markup interface{})
+	AskOptions(reply string, options []string)
 	FirstName() string
 }
 
 type Location struct {
 	Lon float64
 	Lat float64
+}
+
+type InlineParameterHandler interface {
+	GetReplyMarkup() interface{}
+	ParseCallback(data string) (string, error)
 }
 
 type TextParameterParser func(input string) (string, error)
@@ -19,6 +25,7 @@ type CommandParameter struct {
 	AskQuestion   string
 	ParseText     TextParameterParser
 	ParseLocation LocationParameterParser
+	InlineHandler InlineParameterHandler
 }
 
 type ProcessCommand func(parsedParams map[string]string, replySender ReplySender)
