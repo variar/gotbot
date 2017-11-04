@@ -1,6 +1,7 @@
 package gotbot
 
 import (
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,17 +18,19 @@ type botConfiguration struct {
 
 type Bot struct {
 	token         string
+	httpClient    *http.Client
 	configuration botConfiguration
 	chats         map[int64]*chat
 	tbot          *tgbotapi.BotAPI
 }
 
-func NewBot(token string) (*Bot, error) {
-	tbot, err := tgbotapi.NewBotAPI(token)
+func NewBot(token string, httpClient *http.Client) (*Bot, error) {
+	tbot, err := tgbotapi.NewBotAPIWithClient(token, httpClient)
 	if err != nil {
 		return nil, err
 	}
 	bot := Bot{token: token,
+		httpClient:    httpClient,
 		configuration: botConfiguration{Commands: make(map[string]*CommandHandler)},
 		chats:         make(map[int64]*chat),
 		tbot:          tbot,
