@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/golang/glog"
 	"gopkg.in/telegram-bot-api.v4"
@@ -46,6 +47,33 @@ func (bot *Bot) SetMenu(menu *Menu) {
 	bot.configuration.Menu = menu
 }
 
+func getUpdatesChan(tgbot *tgbotapi.BotAPI, timeout int) (tgbotapi.UpdatesChannel, error) {
+	ch := make(chan tgbotapi.Update, tgbot.Buffer)
+
+	updateConfig := tgbotapi.NewUpdate(0)
+	updateConfig.Timeout = timeout
+
+	go func() {
+		for {
+			updates, err := tgbot.GetUpdates(updateConfig)
+			if err != nil {
+				glog.Errorln(err)
+				glog.Errorln("Failed to get updates, retrying in 3 seconds...")
+				time.Sleep(time.Second * 3)
+
+				continue
+			}
+
+			for _, update := range updates {
+				updateConfig.Offset = update.UpdateID + 1
+				ch <- update
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 func (bot *Bot) Start() {
 	var err error
 	if bot.tbot, err = tgbotapi.NewBotAPI(bot.token); err != nil {
@@ -63,10 +91,7 @@ func (bot *Bot) Start() {
 		done <- true
 	}()
 
-	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
-
-	updates, _ := bot.tbot.GetUpdatesChan(updateConfig)
+	updates, _ := getUpdatesChan(bot.tbot, 60)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
