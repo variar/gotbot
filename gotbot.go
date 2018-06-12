@@ -2,19 +2,16 @@ package gotbot
 
 import (
 	"net/http"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
 
-	"github.com/golang/glog"
+	"github.com/m90/go-chatbase"
+
 	"gopkg.in/telegram-bot-api.v4"
 )
 
 type botConfiguration struct {
-	Commands map[string]*CommandHandler
-	Menu     *Menu
+	Commands             map[string]*CommandHandler
+	Menu                 *Menu
+	chatProcessorFactory ChatProcessorFactory
 }
 
 type Bot struct {
@@ -22,11 +19,13 @@ type Bot struct {
 	httpClient    *http.Client
 	configuration botConfiguration
 	chats         map[int64]*chat
-	tbot          *tgbotapi.BotAPI
+	tbot          *TgBot
+	logger        Logger
+	stat          *chatbase.Client
 }
 
-func NewBot(token string, httpClient *http.Client) (*Bot, error) {
-	tbot, err := tgbotapi.NewBotAPIWithClient(token, httpClient)
+func NewBot(token string, statKey string, httpClient *http.Client, logger Logger) (*Bot, error) {
+	tbot, err := NewTgBot(token, httpClient, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -35,96 +34,56 @@ func NewBot(token string, httpClient *http.Client) (*Bot, error) {
 		configuration: botConfiguration{Commands: make(map[string]*CommandHandler)},
 		chats:         make(map[int64]*chat),
 		tbot:          tbot,
+		logger:        logger,
+		stat:          chatbase.New(statKey),
 	}
 	return &bot, nil
 }
 
-func (bot *Bot) AddCommand(handler *CommandHandler) {
+func (bot *Bot) AddCommand(handler *CommandHandler) *Bot {
 	bot.configuration.Commands[handler.Name] = handler
+	return bot
 }
 
-func (bot *Bot) SetMenu(menu *Menu) {
+func (bot *Bot) SetMenu(menu *Menu) *Bot {
 	bot.configuration.Menu = menu
+	return bot
 }
 
-func getUpdatesChan(tgbot *tgbotapi.BotAPI, timeout int) (tgbotapi.UpdatesChannel, error) {
-	ch := make(chan tgbotapi.Update, tgbot.Buffer)
-
-	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = timeout
-
-	go func() {
-		for {
-			updates, err := tgbot.GetUpdates(updateConfig)
-			if err != nil {
-				glog.Errorln(err)
-				glog.Errorln("Failed to get updates, retrying in 3 seconds...")
-				time.Sleep(time.Second * 3)
-
-				continue
-			}
-
-			for _, update := range updates {
-				updateConfig.Offset = update.UpdateID + 1
-				ch <- update
-			}
-		}
-	}()
-
-	return ch, nil
+func (bot *Bot) SetChatProcessorFactory(chatProcessorFactory ChatProcessorFactory) *Bot {
+	bot.configuration.chatProcessorFactory = chatProcessorFactory
+	return bot
 }
 
 func (bot *Bot) Start() {
-	var err error
-	if bot.tbot, err = tgbotapi.NewBotAPI(bot.token); err != nil {
-		os.Exit(1)
-	}
+	bot.tbot.Run(60, func(update tgbotapi.Update) {
 
-	signals := make(chan os.Signal, 1)
-	done := make(chan bool, 1)
-
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		sig := <-signals
-		glog.Infoln("Got signal:", sig)
-		done <- true
-	}()
-
-	updates, _ := getUpdatesChan(bot.tbot, 60)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go bot.messages(updates, &wg, done)
-
-	wg.Wait()
-	glog.Flush()
-}
-
-func (bot *Bot) messages(updateChannel <-chan tgbotapi.Update, wg *sync.WaitGroup, done <-chan bool) {
-	defer wg.Done()
-
-	for {
-		select {
-		case update := <-updateChannel:
-			if update.Message == nil {
-				continue
-			}
-			message := update.Message
-			glog.Infof("Got message: '%s' from %s\n", message.Text, message.From.FirstName)
+		getChat := func(message *tgbotapi.Message) *chat {
 			chat, ok := bot.chats[message.Chat.ID]
 			if !ok {
-				glog.Infoln("New chat started", message.Chat.ID)
-				chat = newChat(bot.tbot, message.Chat, &bot.configuration)
+				bot.logger.Info("New chat started ", message.Chat.ID)
+				chat = newChat(bot.tbot.GetApi(), message.Chat, &bot.configuration, bot.stat, bot.logger)
 				bot.chats[message.Chat.ID] = chat
 			}
-
-			chat.processMessage(message)
-
-		case <-done:
-			glog.Infoln("Stop update handling")
-			return
+			return chat
 		}
-	}
+
+		if update.Message != nil {
+			message := update.Message
+			bot.logger.Infof("Got message: '%s' from %s\n", message.Text, message.From.FirstName)
+
+			chat := getChat(message)
+			chat.processMessage(message)
+		}
+
+		if update.CallbackQuery != nil {
+			bot.logger.Infof("Got callback: '%s' from %s\n", update.CallbackQuery.Data, update.CallbackQuery.From.FirstName)
+
+			bot.tbot.GetApi().AnswerCallbackQuery(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+			message := update.CallbackQuery.Message
+			chat := getChat(message)
+			chat.processCallback(update.CallbackQuery)
+		}
+
+	})
 }

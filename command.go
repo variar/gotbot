@@ -1,11 +1,20 @@
 package gotbot
 
+import (
+	"gopkg.in/telegram-bot-api.v4"
+)
+
 type ReplySender interface {
 	SendReply(reply string)
 	SendReplyWithMarkup(reply string, markup interface{})
+	UpdateMessage(messageID int, text string, markup *tgbotapi.InlineKeyboardMarkup)
 	AskOptions(reply string, options []string)
 	FirstName() string
 }
+
+type ChatProcessor func(messageID int, message string) (ChatProcessor, string)
+
+type ChatProcessorFactory func(replySender ReplySender, logger Logger) ChatProcessor
 
 type Location struct {
 	Lon float64
