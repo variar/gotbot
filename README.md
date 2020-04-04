@@ -1,7 +1,7 @@
 # Gotbot
 >Gotbot is a small framework for creating Telegram Bots written in Golang.
 
-[![Build Status](https://travis-ci.org/variar/gotbot.svg?branch=master)](https://travis-ci.org/variar/gotbot)
+![Test](https://github.com/variar/gotbot/workflows/Test/badge.svg)
 
 Bots are special Telegram accounts designed to handle messages automatically. Users can interact with bots by sending them command messages in private or group chats. These accounts serve as an interface for code running somewhere on your server.
 
