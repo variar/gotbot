@@ -4,9 +4,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/m90/go-chatbase"
 
 	"gopkg.in/telegram-bot-api.v4"
 )
@@ -21,16 +24,17 @@ type Logger interface {
 
 type TgBot struct {
 	api        *tgbotapi.BotAPI
+	stat       *chatbase.Client
 	httpClient *http.Client
 	logger     Logger
 }
 
-func NewDefaultTgBot(tgToken string, logger Logger) (*TgBot, error) {
+func NewDefaultTgBot(tgToken string, statKey string, logger Logger) (*TgBot, error) {
 	httpClient := &http.Client{Timeout: 1 * time.Minute}
-	return NewTgBot(tgToken, httpClient, logger)
+	return NewTgBot(tgToken, statKey, httpClient, logger)
 }
 
-func NewTgBot(tgToken string, httpClient *http.Client, logger Logger) (*TgBot, error) {
+func NewTgBot(tgToken string, statKey string, httpClient *http.Client, logger Logger) (*TgBot, error) {
 	tbot, err := tgbotapi.NewBotAPIWithClient(tgToken, httpClient)
 	if err != nil {
 		logger.Error("Failed to create tg bot ", tgToken, err.Error())
@@ -39,6 +43,7 @@ func NewTgBot(tgToken string, httpClient *http.Client, logger Logger) (*TgBot, e
 
 	bot := TgBot{
 		api:        tbot,
+		stat:       chatbase.New(statKey),
 		httpClient: httpClient,
 		logger:     logger,
 	}
@@ -76,6 +81,47 @@ func (bot *TgBot) getUpdatesChannel(timeout int) (tgbotapi.UpdatesChannel, error
 
 func (bot *TgBot) GetApi() *tgbotapi.BotAPI {
 	return bot.api
+}
+
+func (bot *TgBot) GetStat() *chatbase.Client {
+	return bot.stat
+}
+
+func (bot *TgBot) makeUserStatMessage(user *tgbotapi.User, text string, intent string) *chatbase.Message {
+	stat := bot.stat.UserMessage(strconv.Itoa(user.ID), chatbase.PlatformTelegram)
+	stat.SetMessage(text).SetIntent(intent)
+	return stat
+}
+
+func (bot *TgBot) MessageStat(message *tgbotapi.Message, intent string) *chatbase.Message {
+	return bot.makeUserStatMessage(message.From, message.Text, intent)
+}
+func (bot *TgBot) CallbacStat(callback *tgbotapi.CallbackQuery, intent string) *chatbase.Message {
+	return bot.makeUserStatMessage(callback.From, callback.Data, intent)
+}
+func (bot *TgBot) QueryStat(query *tgbotapi.InlineQuery, intent string) *chatbase.Message {
+	return bot.makeUserStatMessage(query.From, query.Query, intent)
+}
+
+func (bot *TgBot) BotStat(user *tgbotapi.User, message tgbotapi.MessageConfig) *chatbase.Message {
+	return bot.stat.AgentMessage(strconv.Itoa(user.ID), chatbase.PlatformTelegram).SetMessage(message.Text)
+}
+
+func (bot *TgBot) SendBotReply(user *tgbotapi.User, message tgbotapi.MessageConfig) {
+	bot.GetApi().Send(message)
+	bot.SendStat(bot.BotStat(user, message))
+}
+
+func (bot *TgBot) SendStat(statMessage *chatbase.Message) {
+	bot.logger.Info("Submit stat: ", statMessage.Intent)
+	response, err := statMessage.Submit()
+	if err != nil {
+		bot.logger.Error(err)
+	} else if !response.Status.OK() {
+		// the data was submitted to ChatBase, but
+		// the response contained an error code
+		bot.logger.Error(response.Reason)
+	}
 }
 
 func (bot *TgBot) RunAsync(updatesTimeout int, waitGroup *sync.WaitGroup, doneChannel <-chan bool, handler UpdateHandler) {

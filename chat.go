@@ -1,6 +1,7 @@
 package gotbot
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -191,7 +192,11 @@ func (chat *chat) processMessage(message *tgbotapi.Message) {
 	}
 
 	if chat.chatProcessor != nil {
-		nextChatProcessor, intent := chat.chatProcessor(message.MessageID, message.Text)
+		data := message.Text
+		if message.Location != nil {
+			data = fmt.Sprintf("___loc: %f %f", message.Location.Latitude, message.Location.Longitude)
+		}
+		nextChatProcessor, intent := chat.chatProcessor(message.MessageID, data)
 		chat.chatProcessor = nextChatProcessor
 		statMessage.SetIntent(intent)
 		return

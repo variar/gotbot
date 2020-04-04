@@ -3,8 +3,6 @@ package gotbot
 import (
 	"net/http"
 
-	"github.com/m90/go-chatbase"
-
 	"gopkg.in/telegram-bot-api.v4"
 )
 
@@ -21,11 +19,10 @@ type Bot struct {
 	chats         map[int64]*chat
 	tbot          *TgBot
 	logger        Logger
-	stat          *chatbase.Client
 }
 
 func NewBot(token string, statKey string, httpClient *http.Client, logger Logger) (*Bot, error) {
-	tbot, err := NewTgBot(token, httpClient, logger)
+	tbot, err := NewTgBot(token, statKey, httpClient, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +32,6 @@ func NewBot(token string, statKey string, httpClient *http.Client, logger Logger
 		chats:         make(map[int64]*chat),
 		tbot:          tbot,
 		logger:        logger,
-		stat:          chatbase.New(statKey),
 	}
 	return &bot, nil
 }
@@ -62,7 +58,7 @@ func (bot *Bot) Start() {
 			chat, ok := bot.chats[message.Chat.ID]
 			if !ok {
 				bot.logger.Info("New chat started ", message.Chat.ID)
-				chat = newChat(bot.tbot.GetApi(), message.Chat, &bot.configuration, bot.stat, bot.logger)
+				chat = newChat(bot.tbot.GetApi(), message.Chat, &bot.configuration, bot.tbot.GetStat(), bot.logger)
 				bot.chats[message.Chat.ID] = chat
 			}
 			return chat
